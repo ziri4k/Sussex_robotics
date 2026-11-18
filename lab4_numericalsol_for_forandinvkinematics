@@ -1,0 +1,81 @@
+%% Example: load and show the official URDF model of the myCobot 280 M5
+clear; clc;
+
+
+%%
+SDH = @(a, alpha, d, theta) [ ...
+    cos(theta), -sin(theta) * cos(alpha),  sin(theta) * sin(alpha), a * cos(theta); ...
+    sin(theta),  cos(theta) * cos(alpha), -cos(theta) * sin(alpha), a * sin(theta); ...
+    0,           sin(alpha),               cos(alpha),              d; ...
+    0,           0,                        0,                       1];
+
+
+dhParameters = [
+    0.0000, pi/2, 0.13122, 0
+    -0.1104, 0, 0.00000, 0
+    -0.0960, 0, 0.00000, 0
+    0.0000, pi/2, 0.06340, 0
+    0.0000, -pi/2, 0.07505, 0
+    0.0000, 0, 0.04560, 0];
+
+jointOffsetsRad = [0, -pi/2, 0, -pi/2, pi/2, 0];
+qDeg = [0 -30 -45 0 0 0]; % Joint angles q0 [deg]
+theta = deg2rad(qDeg) + jointOffsetsRad;
+
+a = dhParameters(:,1);
+alpha =dhParameters(:,2);
+d = dhParameters(:,3);
+
+
+T01 = SDH(a(1), alpha(1), d(1), theta(1))
+T12 = SDH(a(2), alpha(2), d(2), theta(2))
+T23 = SDH(a(3), alpha(3), d(3), theta(3))
+T34 = SDH(a(4), alpha(4), d(4), theta(4))
+T45 = SDH(a(5), alpha(5), d(5), theta(5))
+T56 = SDH(a(6), alpha(6), d(6), theta(6))
+
+T06 = T01 * T12 * T23 * T34 * T45 * T56
+position_mm = 1000 * T06(1:3, 4)' % Position [mm]
+rotation = T06(1:3, 1:3) % Rotation matrix
+
+%% Call URDF
+T06_target=T06;
+% Build the URDF path from the location of this script
+scriptFolder = fileparts(mfilename('fullpath'));
+urdfFile = fullfile(scriptFolder,'Official_URDF_Model','mycobot_280_m5','mycobot_280_m5_matlab.urdf');
+
+% Import the URDF model
+robot = importrobot(urdfFile);
+robot.DataFormat = 'row';
+
+% Show the robot for one joint configuration
+qDeg = [0 0 0 0 0 0];                    % Robot joint angles [deg]
+
+figure;
+show(robot,deg2rad(qDeg),'Frames','off');
+axis equal; grid on;
+title(['myCobot 280 M5 URDF model at q = ' mat2str(qDeg) ' deg']);
+
+baseFrame = 'g_base';
+endEffectorFrame = 'joint6_flange'; 
+
+%% inverse kinematics
+weights = [1 1 1 1 1 1];
+ik = inverseKinematics('RigidBodyTree', robot);
+ik.SolverParameters.EnforceJointLimits = false;
+
+guess1Deg = [30 -30 -45 30 -45 60]; % Joint angles [deg] Initial guess 1 (Table 
+solution1Rad = ik(endEffectorFrame, T06_target, weights, deg2rad(guess1Deg));
+solution1Deg = mod(rad2deg(solution1Rad) + 180, 360)
+
+
+%JOGGING
+qCurrentDeg = [0 -30 -45 0 0 0];
+qCurrentRad = deg2rad(qCurrentDeg);
+Tcurrent = getTransform(robot,qCurrentRad, ...
+    endEffectorFrame,baseFrame);
+
+jog_mm = input('Enter [dx dy dz] in mm: '); 
+
+Ttarget = Tcurrent;
+Ttarget(1:3,4) = Tcurrent(1:3,4) + jog_mm'/1000;
